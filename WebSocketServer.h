@@ -79,11 +79,11 @@ public:
     bool handshake(Client &client);
     
     // Get data off of the stream
-    String getData();
+    String getData(Client &client);
 
     // Write data to the stream
-    void sendData(const char *str);
-    void sendData(String str);
+    void sendData(const char *str,Client &client);
+    void sendData(String str,Client &client);
 
 private:
     Client *socket_client;

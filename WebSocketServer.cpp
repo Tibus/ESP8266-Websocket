@@ -358,7 +358,8 @@ void WebSocketServer::disconnectStream() {
     socket_client->stop();
 }
 
-String WebSocketServer::getData() {
+String WebSocketServer::getData(Client &client) {
+    socket_client = &client;
     String data;
 
     if (hixie76style) {
@@ -372,7 +373,8 @@ String WebSocketServer::getData() {
     return data;
 }
 
-void WebSocketServer::sendData(const char *str) {
+void WebSocketServer::sendData(const char *str, Client &client) {
+    socket_client = &client;
 #ifdef DEBUGGING
     Serial.print(F("Sending data: "));
     Serial.println(str);
@@ -388,7 +390,9 @@ void WebSocketServer::sendData(const char *str) {
     }
 }
 
-void WebSocketServer::sendData(String str) {
+void WebSocketServer::sendData(String str, Client &client) {
+    socket_client = &client;
+
 #ifdef DEBUGGING
     Serial.print(F("Sending data: "));
     Serial.println(str);

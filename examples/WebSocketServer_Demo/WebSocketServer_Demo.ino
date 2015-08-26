@@ -1,123 +1,99 @@
-#include <SPI.h>
-#include <SC16IS750.h>
-#include <WiFly.h>
+/* 
+  Based on WiFiTelnetToSerial
+*/
+#include <ESP8266WiFi.h>
+#include <WebSocketServer.h>//https://github.com/morrissinger/ESP8266-Websocket
 
-// Enabe debug tracing to Serial port.
-#define DEBUGGING
+//how many clients should be able to WebSocket to this ESP8266
+#define MAX_SRV_CLIENTS 10
 
-// Here we define a maximum framelength to 64 bytes. Default is 256.
-#define MAX_FRAME_LENGTH 64
+const char* ssid = "XXXXXXXX";
+const char* password = "XXXXXXXX";
 
-// Define how many callback functions you have. Default is 1.
-#define CALLBACK_FUNCTIONS 1
+String inputString = "";         // a string to hold incoming data
+boolean stringComplete = false;  // whether the string is complete
 
-#include <WebSocketServer.h>
-
-WiFlyServer server(80);
+WiFiServer server(8081);
 WebSocketServer webSocketServer;
-
-
-// Called when a new message from the WebSocket is received
-// Looks for a message in this form:
-//
-// DPV
-//
-// Where: 
-//        D is either 'd' or 'a' - digital or analog
-//        P is a pin #
-//        V is the value to apply to the pin
-//
-
-void handleClientData(String &dataString) {
-  bool isDigital = dataString[0] == 'd';
-  int pin = dataString[1] - '0';
-  int value;
-
-  value = dataString[2] - '0';
-
-    
-  pinMode(pin, OUTPUT);
-   
-  if (isDigital) {
-    digitalWrite(pin, value);
-  } else {
-    analogWrite(pin, value);
-  }
-    
-  Serial.println(dataString);
-}
-
-// send the client the analog value of a pin
-void sendClientData(int pin) {
-  String data = "a";
-  
-  pinMode(pin, INPUT);
-  data += String(pin) + String(analogRead(pin));
-  webSocketServer.sendData(data);  
-}
+WiFiClient serverClients[MAX_SRV_CLIENTS];
 
 void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
   
-
-  Serial.begin(9600);
-  SC16IS750.begin();
+  Serial.print("\nConnecting to "); Serial.println(ssid);
+  uint8_t i = 0;
   
-  WiFly.setUart(&SC16IS750);
+  while (WiFi.status() != WL_CONNECTED && i++ < 20) delay(500);
+  if(i == 21){
+    Serial.print("Could not connect to"); Serial.println(ssid);
+    while(1) delay(500);
+  }
   
-  WiFly.begin();
-  
-  // This is for an unsecured network
-  // For a WPA1/2 network use auth 3, and in another command send 'set wlan phrase PASSWORD'
-  // For a WEP network use auth 2, and in another command send 'set wlan key KEY'
-  WiFly.sendCommand(F("set wlan auth 1"));
-  WiFly.sendCommand(F("set wlan channel 0"));
-  WiFly.sendCommand(F("set ip dhcp 1"));
-  
+  //start UART and the server
   server.begin();
-  Serial.println(F("Joining WiFi network..."));
+  server.setNoDelay(true);
   
-
-  // Here is where you set the network name to join
-  if (!WiFly.sendCommand(F("join arduino_wifi"), "Associated!", 20000, false)) {
-    Serial.println(F("Association failed."));
-    while (1) {
-      // Hang on failure.
-    }
-  }
-  
-  if (!WiFly.waitForResponse("DHCP in", 10000)) {  
-    Serial.println(F("DHCP failed."));
-    while (1) {
-      // Hang on failure.
-    }
-  }
-
-  // This is how you get the local IP as an IPAddress object
-  Serial.println(WiFly.localIP());
-  
-  // This delay is needed to let the WiFly respond properly
-  delay(100);
+  Serial.print("Ready! Use 'telnet ");
+  Serial.print(WiFi.localIP());
+  Serial.println(" 8081' to connect");
 }
 
 void loop() {
-  String data;
-  WiFlyClient client = server.available();
-  
-  if (client.connected() && webSocketServer.handshake(client)) {
-    
-    while (client.connected()) {
-      data = webSocketServer.getData();
-
-      if (data.length() > 0) {
-        handleClientData(data);
+  uint8_t i;
+  if (server.hasClient()){
+    for(i = 0; i < MAX_SRV_CLIENTS; i++){
+      if (!serverClients[i] || !serverClients[i].connected()){
+        if(serverClients[i]) serverClients[i].stop();
+        serverClients[i] = server.available();
+        while(!serverClients[i].available())
+        {
+          //Serial.println("wait");
+        }
+        webSocketServer.handshake(serverClients[i]);
+        Serial.print("New client: "); Serial.println(i);
+        break;
       }
-
-      sendClientData(1);
-      sendClientData(2);
-      sendClientData(3);
+    }
+    
+    WiFiClient serverClient = server.available();
+    serverClient.stop();
+  }
+  //check clients for data
+  for(i = 0; i < MAX_SRV_CLIENTS; i++){
+    if (serverClients[i] && serverClients[i].connected()){
+      if(serverClients[i].available()){
+        while(serverClients[i].available()){
+          String data = webSocketServer.getData(serverClients[i]);
+          if (data.length() > 0) {
+            Serial.print("receive Data from client ");
+            Serial.print(i);
+            Serial.print(":");
+            Serial.println(data);
+            //ECHO to the client:
+            webSocketServer.sendData("you sent :"+data, serverClients[i]);
+          }
+        }
+      }
     }
   }
-  
-  // wait to fully let the client disconnect
-  delay(100);
+
+  while (Serial.available()) {
+    // get the new byte:
+    char inChar = (char)Serial.read();
+    // add it to the inputString:
+    inputString += inChar;
+    // if the incoming character is a newline, set a flag
+    // so the main loop can do something about it:
+    if (inChar == '\n') {
+      for(i = 0; i < MAX_SRV_CLIENTS; i++){
+        if (serverClients[i] && serverClients[i].connected()){
+          webSocketServer.sendData(inputString, serverClients[i]);
+          delay(1);
+        }
+      }
+
+      inputString = "";
+    }
+  }
 }
